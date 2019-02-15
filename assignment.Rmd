@@ -1,0 +1,77 @@
+---
+title: "Practical Machine Learning Course Assignment"
+author: "Thomas Neitmann"
+output: html_document
+---
+
+The aim of this assignment is to predict the "quality" of a weightlifting task, i.e. biceps curl, based upon wearable accelerometer data. To get started, let's first download the data.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+```
+
+```{r get_data}
+trainUrl = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+trainFile = RCurl::getURL(trainUrl)
+train = read.csv(textConnection(trainFile))
+
+testUrl = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testFile = RCurl::getURL(testUrl)
+test = read.csv(textConnection(testFile))
+```
+
+Now that we have the data at hand let's inspect what we are dealing with.
+
+```{r data_dim}
+dim(train)
+dim(test)
+```
+
+```{r var_names}
+colnames(train)
+```
+
+The last variable `classe` is the prediction target.
+
+```{r target_levels}
+levels(train$classe)
+```
+It has five levels. `A` corresponds to the proper task execution whereas the other four classes represent common mistakes.
+
+The first 7 variables contain user and time-stamp information. I will discard those later. Next, on to missing values. I will not show it here for brevitiy but the test set contains a whole bunch of columns consisting solely of `NA` values. Therefore, I will discard these columns in the training set prior to model building. Further note that in the test set in all cases the `new_window` variable has a value of `"no"`. Thus, I will filter the training set accordingly.
+
+```{r remove_na_cols}
+naFun = function(x) all(is.na(x))
+nonNaCols = names(which(!apply(test, 2L, naFun)))
+m = length(nonNaCols)
+
+test = test[, nonNaCols]
+train = train[train$new_window == "no", c("classe", nonNaCols[-m])]
+```
+
+To predict the target variable, `classe`, I will train a random forest model using all accelerometer derived features as predictors. Note that I use `method = "ranger"` which is a faster implementation of the random forest algorithmn than `method = "rf"`. For training I will use 5-fold cross-validation repeated 3 times. To tune the hyperparamter I will use a random search.
+
+```{r model_building, cache=TRUE}
+cl = parallel::makePSOCKcluster(3L) # use 3 cores
+doParallel::registerDoParallel(cl)
+
+set.seed(418)
+features = colnames(train)[8:(ncol(train)-1)]
+target = "classe"
+myFolds = createMultiFolds(train$classe, 5, 3)
+myControl = trainControl("repeatedcv", 5, 3, index = myFolds, search = "random",
+                         savePredictions = "final", classProbs = TRUE)
+model = train(train[, features], train[, target], method = "ranger",
+              trControl = myControl, tuneLength = 10, verbose = TRUE)
+
+parallel::stopCluster(cl)
+
+model
+```
+
+Wow, the cross-validated prediction accuracy is `> 0.99`! And not only that, I got 100% accuracy in the Course Prediction Quiz :-)
+
+```{r}
+predict(model, test)
+```
